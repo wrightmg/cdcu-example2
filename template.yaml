@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: "AWS::Serverless-2016-10-31"
+Description: CDCu Example 2 CloudFormation template.
+
+Parameters:
+  Stage:
+    Description: The stage environment for this template.
+    Type: String
+    Default : dev
+    AllowedValues:
+      - dev
+      - prod
+  S3BucketName:
+    Type: String
+    Default: cdcu-sample-bucket
+
+Resources:
+  LambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "lambda-cdcu-example2-${Stage}-${AWS::Region}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaRole"
+      Policies:
+          -
+            PolicyName: "lambda-cdcu-example2"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                -
+                  Effect: "Allow"
+                  Action:
+                    - "s3:GetObject"
+                    - "s3:ListBucket"
+                  Resource:
+                    - !Sub "arn:aws:s3:::${S3BucketName}-${Stage}"
+                    - !Sub "arn:aws:s3:::${S3BucketName}-${Stage}/*"
+
+  ProcessorFunction:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - LambdaRole
+    Properties:
+      FunctionName: !Sub "cdcu-example2-${Stage}"
+      Description: "CDCu example 2 Lambda function"
+      Handler: index.handler
+      Runtime: nodejs14.x
+      MemorySize: 256
+      Timeout: 15
+      Role: !GetAtt LambdaRole.Arn
+      CodeUri: ./dist
+      Tags:
+        environment: !Ref Stage
+        application: CDCu Samples
+      Environment:
+        Variables:
+          STAGE: !Ref Stage
+
+  ProcessS3Bucket:
+    Type: AWS::S3::Bucket
+    DependsOn: ExampleInvokePermission
+    Properties:
+      BucketName: !Sub "${S3BucketName}-${Stage}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: TRUE
+        BlockPublicPolicy: TRUE
+        IgnorePublicAcls: TRUE
+        RestrictPublicBuckets: TRUE
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:Put
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: csv
+            Function: !GetAtt ProcessorFunction.Arn
+
+  ExampleInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: ProcessorFunction
+    Properties:
+      FunctionName: !GetAtt ProcessorFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub "arn:aws:s3:::${S3BucketName}-${Stage}"
